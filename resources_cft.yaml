@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: telco-raw-data-lake
+
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      RoleName: telcoIAMrole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+                - redshift.amazonaws.com
+                - ec2.amazonaws.com
+                - rds.amazonaws.com
+            Action: sts:AssumeRole
+
+  IAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: telcoIAMPolicy
+      Roles:
+        - Ref: IAMRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:*
+              - glue:*
+              - redshift:*
+              - rds:*
+            Resource: "*"
+  
+Outputs:
+  S3BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref S3Bucket
+  IAMRoleName:
+    Description: Name of the IAM Role
+    Value: !Ref IAMRole
