@@ -1,3 +1,11 @@
 # Credential file
 
 credentials/
+
+
+#Python Virtual Environment
+
+telco_venv/
+
+
+*.pyc
