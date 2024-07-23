@@ -13,6 +13,7 @@ from airflow.providers.amazon.aws.operators.glue_crawler import GlueCrawlerOpera
 from pandas import DataFrame
 from io import StringIO 
 from airflow.models.baseoperator import chain
+from airflow.providers.amazon.aws.hooks.redshift_sql import RedshiftSQLHook 
 
 schema_name = 'telco_schema'
 table_name = 'telco_customr_churn_data'
@@ -80,13 +81,37 @@ def telco_etl_data_pipeline():
         return record_modified
 
     @task
-    def create_():
-        print()
+    def create_relevant_schema_on_redshift():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'churn-data-analytics-data-pipeline/dags/sql/create_relevant_schema.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
 
+    @task
+    def create_common_tables():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'churn-data-analytics-data-pipeline/dags/sql/create_common_table.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
 
     @task_group
     def sync_staging_layer():
-        create_external_schema_on_redshift()
+        create_relevant_schema_on_redshift()
+        create_common_tables()
 
     @task_group
     def ingest_data_task_group(record_modified):
@@ -99,10 +124,11 @@ def telco_etl_data_pipeline():
 
 
     last_sync = get_last_etl_sync()
-    ingest = ingest_data_task_group(last_sync) 
+    # ingest = ingest_data_task_group(last_sync) 
     # glue_crawler = trigger_glue_crawler()
-    # landing_layer = sync_landing_layer()
+    landing_layer = sync_staging_layer()
 
-    chain(last_sync, ingest)
+
+    chain(last_sync,landing_layer)
 
 dag_instance = telco_etl_data_pipeline()
