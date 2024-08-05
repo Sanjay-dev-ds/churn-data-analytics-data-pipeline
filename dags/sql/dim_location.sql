@@ -18,3 +18,9 @@ WITH last_load AS (
 SELECT DISTINCT Country, State, City, Zip_Code, Latitude, Longitude
 FROM telco_internal.staging_telco_customer_churn_data
 WHERE "record_modified" > (SELECT COALESCE(MAX(last_load_timestamp), '1900-01-01') FROM last_load);
+
+
+
+DELETE FROM telco_internal.control_table WHERE table_name =  'telco_internal.dim_location';
+INSERT INTO telco_internal.control_table (table_name, last_load_timestamp)
+VALUES ('telco_internal.dim_location', CURRENT_TIMESTAMP);

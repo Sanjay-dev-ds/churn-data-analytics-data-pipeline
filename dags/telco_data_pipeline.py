@@ -19,7 +19,7 @@ schema_name = 'telco_schema'
 table_name = 'telco_customr_churn_data'
 s3_bucket = 'telco-raw-data-lake'
 s3_prefix = 'telco_customer_churn_data'
-glue_crawler_name = 'telco-data-crawler'
+glue_crawler_name = 'telco-s3-data-crawler'
 REGION = 'us-east-1'
 STAGE_TABLE_NAME = 'telco_internal.staging_telco_customer_churn_data'
 
@@ -72,6 +72,8 @@ def telco_etl_data_pipeline():
             rows = cursor.fetchall()
             df = pd.DataFrame(rows, columns=[desc[0] for desc in cursor.description])
             print("Number of records : ",len(df))
+            
+            conn.commit()
             cursor.close() 
             return df
 
@@ -80,6 +82,7 @@ def telco_etl_data_pipeline():
         record_modified = Variable.get('record_modified', default_var=None)
         record_modified = None
         return record_modified
+
 
     @task
     def create_relevant_schema_on_redshift():
@@ -93,6 +96,8 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+
+            conn.commit()
             cursor.close()
 
     @task
@@ -107,7 +112,28 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+
+            conn.commit()
             cursor.close()
+
+    @task
+    def update_last_sync_time(table_name) :
+        print('updating sync time')
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/update_last_etl_sync.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+                formatted_query = query.format(table_name=table_name)
+                print(formatted_query)
+            for stmt in formatted_query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            conn.commit()
+            cursor.close()
+
 
     @task
     def create_or_populate_staging_table():
@@ -121,27 +147,14 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+            conn.commit()
             cursor.close()
-        update_last_sync_time(STAGE_TABLE_NAME)
 
-    @task 
-    def update_last_sync_time(table_name) :
-        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
-        with redshift_hook.get_conn() as conn:
-            cursor = conn.cursor()
-            sql_file_path = 'dags/sql/update_last_etl_sync.sql'
-            with open(sql_file_path, 'r') as file:
-                query = file.read()
-                formatted_query = query.format(table_name=table_name)
-            for stmt in formatted_query.strip().split(';'):
-                if stmt.strip():
-                    print("Executing : ", stmt)
-                    cursor.execute(stmt)
-            cursor.close()
+
 
     @task_group
     def sync_staging_layer():
-        chain([create_relevant_schema_on_redshift(), create_common_tables()],create_or_populate_staging_table())
+        chain([create_relevant_schema_on_redshift(), create_common_tables()],create_or_populate_staging_table(),update_last_sync_time(STAGE_TABLE_NAME))
 
 
     @task_group
@@ -166,9 +179,9 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+            conn.commit()
             cursor.close()
 
-        update_last_sync_time('telco_internal.dim_location')
 
     @task
     def dim_service_sync():
@@ -182,9 +195,10 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+            conn.commit()
             cursor.close()
 
-        update_last_sync_time('telco_internal.dim_service')
+        
 
     
     @task
@@ -199,35 +213,55 @@ def telco_etl_data_pipeline():
                 if stmt.strip():
                     print("Executing : ", stmt)
                     cursor.execute(stmt)
+            conn.commit()
             cursor.close()
-
-        update_last_sync_time('telco_internal.dim_customer')
-
 
 
     @task_group
     def dimension_table_generation():
         location_task = dim_location_sync()
-        service_task = dim_service_sync()
-        customer_task = dim_customer_sync()
+        update_last_sync_time_dim_location =  update_last_sync_time('telco_internal.dim_location')
         
-        [location_task, service_task, customer_task]
+        service_task = dim_service_sync()
+        update_last_sync_time_dim_service =  update_last_sync_time('telco_internal.dim_service')
+
+        customer_task = dim_customer_sync()
+        update_last_sync_time_dim_customer =  update_last_sync_time('telco_internal.dim_customer')
 
 
+        
+        [chain(location_task,update_last_sync_time_dim_location),
+         chain(service_task,update_last_sync_time_dim_service) , 
+         chain(customer_task,update_last_sync_time_dim_customer)]
+
+    @task
+    def fact_table_generation():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/fact_churn.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            conn.commit()
+            cursor.close()
     
-    @task_group
-    def sync_consumable_layer():
-         dimension_table_generation()
 
+    @task_group
+    def fact_layer():
+         chain(fact_table_generation(),update_last_sync_time('telco_internal.fact_churn'))
 
 
     last_sync = get_last_etl_sync()
-    # ingest = ingest_data_task_group(last_sync) 
-    # glue_crawler = trigger_glue_crawler()
+    ingest = ingest_data_task_group(last_sync) 
+    glue_crawler = trigger_glue_crawler()
     landing_layer = sync_staging_layer()
-    consumption_layer = sync_consumable_layer()
+    dimension_sync = dimension_table_generation()
+    fact_layer = fact_layer()
 
-
-    chain(last_sync,landing_layer,consumption_layer)
+    chain(last_sync,ingest,glue_crawler,landing_layer,dimension_sync,fact_layer)
 
 dag_instance = telco_etl_data_pipeline()
