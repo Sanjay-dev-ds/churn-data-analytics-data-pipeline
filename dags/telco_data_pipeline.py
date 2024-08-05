@@ -80,7 +80,6 @@ def telco_etl_data_pipeline():
     @task
     def get_last_etl_sync():
         record_modified = Variable.get('record_modified', default_var=None)
-        record_modified = None
         return record_modified
 
 
