@@ -85,7 +85,7 @@ def telco_etl_data_pipeline():
         redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
         with redshift_hook.get_conn() as conn:
             cursor = conn.cursor()
-            sql_file_path = 'churn-data-analytics-data-pipeline/dags/sql/create_relevant_schema.sql'
+            sql_file_path = 'dags/sql/create_relevant_schema.sql'
             with open(sql_file_path, 'r') as file:
                 query = file.read()
             for stmt in query.strip().split(';'):
@@ -99,7 +99,7 @@ def telco_etl_data_pipeline():
         redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
         with redshift_hook.get_conn() as conn:
             cursor = conn.cursor()
-            sql_file_path = 'churn-data-analytics-data-pipeline/dags/sql/create_common_table.sql'
+            sql_file_path = 'dags/sql/create_common_table.sql'
             with open(sql_file_path, 'r') as file:
                 query = file.read()
             for stmt in query.strip().split(';'):
