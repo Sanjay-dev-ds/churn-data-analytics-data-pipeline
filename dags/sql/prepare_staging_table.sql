@@ -47,7 +47,7 @@ INSERT INTO telco_internal.staging_telco_customer_churn_data (
 WITH last_load AS (
     SELECT last_load_timestamp
     FROM telco_internal.control_table
-    WHERE table_name = 'telco_external.landing_telco_customer_churn_data'
+    WHERE table_name = 'telco_internal.staging_telco_customer_churn_data'
 )
 SELECT
     DISTINCT CustomerID, Count, Country, State, City, "zip code",

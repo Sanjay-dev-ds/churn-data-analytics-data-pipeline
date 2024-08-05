@@ -21,6 +21,7 @@ s3_bucket = 'telco-raw-data-lake'
 s3_prefix = 'telco_customer_churn_data'
 glue_crawler_name = 'telco-data-crawler'
 REGION = 'us-east-1'
+STAGE_TABLE_NAME = 'telco_internal.staging_telco_customer_churn_data'
 
 default_args = {
     'owner': 'airflow',
@@ -108,10 +109,40 @@ def telco_etl_data_pipeline():
                     cursor.execute(stmt)
             cursor.close()
 
+    @task
+    def create_or_populate_staging_table():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/prepare_staging_table.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
+        update_last_sync_time(STAGE_TABLE_NAME)
+
+    @task 
+    def update_last_sync_time(table_name) :
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/update_last_etl_sync.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+                formatted_query = query.format(table_name=table_name)
+            for stmt in formatted_query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
+
     @task_group
     def sync_staging_layer():
-        create_relevant_schema_on_redshift()
-        create_common_tables()
+        chain([create_relevant_schema_on_redshift(), create_common_tables()],create_or_populate_staging_table())
+
 
     @task_group
     def ingest_data_task_group(record_modified):
@@ -121,14 +152,82 @@ def telco_etl_data_pipeline():
         ingest_data_into_s3(df, s3_bucket, s3_key)
         Variable.set('record_modified', current_timestamp)
 
+    
+    
+    @task
+    def dim_location_sync():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/dim_location.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
+
+        update_last_sync_time('telco_internal.dim_location')
+
+    @task
+    def dim_service_sync():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/dim_service.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
+
+        update_last_sync_time('telco_internal.dim_service')
+
+    
+    @task
+    def dim_customer_sync():
+        redshift_hook = RedshiftSQLHook(redshift_conn_id='redshift_default')
+        with redshift_hook.get_conn() as conn:
+            cursor = conn.cursor()
+            sql_file_path = 'dags/sql/dim_customer.sql'
+            with open(sql_file_path, 'r') as file:
+                query = file.read()
+            for stmt in query.strip().split(';'):
+                if stmt.strip():
+                    print("Executing : ", stmt)
+                    cursor.execute(stmt)
+            cursor.close()
+
+        update_last_sync_time('telco_internal.dim_customer')
+
+
+
+    @task_group
+    def dimension_table_generation():
+        location_task = dim_location_sync()
+        service_task = dim_service_sync()
+        customer_task = dim_customer_sync()
+        
+        [location_task, service_task, customer_task]
+
+
+    
+    @task_group
+    def sync_consumable_layer():
+         dimension_table_generation()
+
 
 
     last_sync = get_last_etl_sync()
     # ingest = ingest_data_task_group(last_sync) 
     # glue_crawler = trigger_glue_crawler()
     landing_layer = sync_staging_layer()
+    consumption_layer = sync_consumable_layer()
 
 
-    chain(last_sync,landing_layer)
+    chain(last_sync,landing_layer,consumption_layer)
 
 dag_instance = telco_etl_data_pipeline()
