@@ -1,0 +1,5 @@
+apache-airflow
+apache-airflow-providers-amazon
+apache-airflow[postgres]
+pandas
+pyarrow
